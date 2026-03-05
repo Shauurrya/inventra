@@ -1,0 +1,255 @@
+// Prisma Schema for Inventra — Inventory Management SaaS
+// By Inventor Solutions Pvt. Ltd.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  ADMIN
+  AUDITOR
+  VIEWER
+  STAFF
+}
+
+enum SubscriptionPlan {
+  FREE
+  BASIC
+  PRO
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+enum StockMovementType {
+  PRODUCTION_IN
+  PRODUCTION_OUT
+  SALE_OUT
+  MANUAL_ADJUSTMENT
+  PURCHASE_IN
+  OPENING_STOCK
+}
+
+enum ItemType {
+  RAW_MATERIAL
+  FINISHED_PRODUCT
+}
+
+model Company {
+  id                 String             @id @default(cuid())
+  name               String
+  industry           String             @default("other")
+  address            String?
+  subscriptionPlan   SubscriptionPlan   @default(FREE)
+  subscriptionStatus SubscriptionStatus @default(ACTIVE)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  users             User[]
+  rawMaterials      RawMaterial[]
+  finishedProducts  FinishedProduct[]
+  billOfMaterials   BillOfMaterials[]
+  productionEntries ProductionEntry[]
+  salesEntries      SalesEntry[]
+  stockMovements    StockMovement[]
+  purchases         RawMaterialPurchase[]
+  lowStockAlerts    LowStockAlert[]
+  dailySnapshots    DailySnapshot[]
+  consumptionLogs   MaterialConsumptionLog[]
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         Role     @default(STAFF)
+  companyId    String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  company           Company           @relation(fields: [companyId], references: [id])
+  productionEntries ProductionEntry[]
+  salesEntries      SalesEntry[]
+  purchases         RawMaterialPurchase[]
+}
+
+model RawMaterial {
+  id                String   @id @default(cuid())
+  name              String
+  unit              String   @default("piece")
+  quantityInStock   Decimal  @default(0) @db.Decimal(12, 3)
+  minimumStockLevel Decimal  @default(0) @db.Decimal(12, 3)
+  maxStockLevel     Decimal? @db.Decimal(10, 3)
+  costPerUnit       Decimal  @default(0) @db.Decimal(12, 2)
+  reorderQuantity   Decimal? @db.Decimal(10, 3)
+  supplierName      String?
+  companyId         String
+  isDeleted         Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  company         Company                  @relation(fields: [companyId], references: [id])
+  billOfMaterials BillOfMaterials[]
+  purchases       RawMaterialPurchase[]
+  lowStockAlerts  LowStockAlert[]
+  consumptionLogs MaterialConsumptionLog[]
+}
+
+model FinishedProduct {
+  id                      String   @id @default(cuid())
+  name                    String
+  sku                     String?
+  description             String?
+  sellingPrice            Decimal  @default(0) @db.Decimal(12, 2)
+  quantityInStock         Decimal  @default(0) @db.Decimal(12, 3)
+  targetMonthlyProduction Decimal? @db.Decimal(10, 2)
+  category                String?
+  companyId               String
+  isDeleted               Boolean  @default(false)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  company           Company           @relation(fields: [companyId], references: [id])
+  billOfMaterials   BillOfMaterials[]
+  productionEntries ProductionEntry[]
+  salesEntries      SalesEntry[]
+}
+
+model BillOfMaterials {
+  id                String  @id @default(cuid())
+  finishedProductId String
+  rawMaterialId     String
+  quantityRequired  Decimal @db.Decimal(12, 3)
+  companyId         String
+
+  finishedProduct FinishedProduct @relation(fields: [finishedProductId], references: [id])
+  rawMaterial     RawMaterial     @relation(fields: [rawMaterialId], references: [id])
+  company         Company         @relation(fields: [companyId], references: [id])
+
+  @@unique([finishedProductId, rawMaterialId])
+}
+
+model ProductionEntry {
+  id                String   @id @default(cuid())
+  finishedProductId String
+  quantityProduced  Decimal  @db.Decimal(12, 3)
+  productionDate    DateTime @default(now())
+  notes             String?
+  companyId         String
+  createdBy         String
+  createdAt         DateTime @default(now())
+
+  finishedProduct FinishedProduct @relation(fields: [finishedProductId], references: [id])
+  company         Company         @relation(fields: [companyId], references: [id])
+  user            User            @relation(fields: [createdBy], references: [id])
+
+  @@index([companyId, productionDate])
+  @@index([companyId, finishedProductId])
+}
+
+model SalesEntry {
+  id                String   @id @default(cuid())
+  finishedProductId String
+  quantitySold      Decimal  @db.Decimal(12, 3)
+  saleDate          DateTime @default(now())
+  customerName      String?
+  notes             String?
+  revenueAmount     Decimal  @db.Decimal(12, 2)
+  companyId         String
+  createdBy         String
+  createdAt         DateTime @default(now())
+
+  finishedProduct FinishedProduct @relation(fields: [finishedProductId], references: [id])
+  company         Company         @relation(fields: [companyId], references: [id])
+  user            User            @relation(fields: [createdBy], references: [id])
+
+  @@index([companyId, saleDate])
+  @@index([companyId, finishedProductId])
+}
+
+model StockMovement {
+  id             String            @id @default(cuid())
+  type           StockMovementType
+  itemType       ItemType
+  itemId         String
+  quantityChange Decimal           @db.Decimal(12, 3)
+  balanceAfter   Decimal           @db.Decimal(12, 3)
+  referenceId    String?
+  notes          String?
+  companyId      String
+  createdAt      DateTime          @default(now())
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@index([companyId, createdAt])
+  @@index([companyId, itemId, itemType])
+}
+
+model RawMaterialPurchase {
+  id                String   @id @default(cuid())
+  rawMaterialId     String
+  quantityPurchased Decimal  @db.Decimal(12, 3)
+  costPerUnit       Decimal  @db.Decimal(12, 2)
+  totalCost         Decimal  @db.Decimal(12, 2)
+  purchaseDate      DateTime @default(now())
+  supplierName      String?
+  notes             String?
+  companyId         String
+  createdBy         String
+  createdAt         DateTime @default(now())
+
+  rawMaterial RawMaterial @relation(fields: [rawMaterialId], references: [id])
+  company     Company     @relation(fields: [companyId], references: [id])
+  user        User        @relation(fields: [createdBy], references: [id])
+}
+
+model LowStockAlert {
+  id               String   @id @default(cuid())
+  rawMaterialId    String
+  alertTriggeredAt DateTime @default(now())
+  isRead           Boolean  @default(false)
+  companyId        String
+
+  rawMaterial RawMaterial @relation(fields: [rawMaterialId], references: [id])
+  company     Company     @relation(fields: [companyId], references: [id])
+}
+
+model DailySnapshot {
+  id                    String   @id @default(cuid())
+  snapshotDate          DateTime @db.Date
+  totalInventoryValue   Decimal  @db.Decimal(12, 2)
+  totalRawMaterialCount Int
+  totalProductCount     Int
+  dailyRevenue          Decimal  @db.Decimal(12, 2)
+  dailyProductionUnits  Decimal  @db.Decimal(10, 2)
+  companyId             String
+  company               Company  @relation(fields: [companyId], references: [id])
+  createdAt             DateTime @default(now())
+
+  @@unique([companyId, snapshotDate])
+  @@index([companyId, snapshotDate])
+}
+
+model MaterialConsumptionLog {
+  id               String      @id @default(cuid())
+  rawMaterialId    String
+  rawMaterial      RawMaterial @relation(fields: [rawMaterialId], references: [id])
+  consumptionDate  DateTime    @db.Date
+  quantityConsumed Decimal     @db.Decimal(10, 3)
+  companyId        String
+  company          Company     @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, rawMaterialId, consumptionDate])
+  @@index([companyId, consumptionDate])
+  @@index([rawMaterialId, consumptionDate])
+}
