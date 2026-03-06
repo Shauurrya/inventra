@@ -1,8 +1,8 @@
 "use client";
 
 import { useSession } from "next-auth/react";
-import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useState, useEffect } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
 import { Settings2, Users, Shield } from "lucide-react";
@@ -11,15 +11,44 @@ const fadeUp = { hidden: { opacity: 0, y: 20 }, show: { opacity: 1, y: 0, transi
 const tabs = [{ key: "company", label: "Company", icon: Settings2 }, { key: "team", label: "Team", icon: Users }, { key: "security", label: "Security", icon: Shield }];
 
 export default function SettingsPage() {
-    const { data: session } = useSession();
+    const { data: session, update: updateSession } = useSession();
+    const queryClient = useQueryClient();
     const [tab, setTab] = useState("company");
     const [company, setCompany] = useState({ name: "", industry: "", address: "" });
     const [invite, setInvite] = useState({ name: "", email: "", role: "STAFF" });
     const [pw, setPw] = useState({ current: "", newPw: "", confirm: "" });
 
+    // Fetch current company details from API
+    const { data: companyData } = useQuery({
+        queryKey: ["company-details"],
+        queryFn: async () => {
+            const r = await fetch("/api/company");
+            if (!r.ok) return null;
+            return r.json();
+        },
+    });
+
+    // Pre-populate form with current company data
+    useEffect(() => {
+        if (companyData) {
+            setCompany({
+                name: companyData.name || "",
+                industry: companyData.industry || "",
+                address: companyData.address || "",
+            });
+        }
+    }, [companyData]);
+
     const companyMut = useMutation({
         mutationFn: async (d: any) => { const r = await fetch("/api/company", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(d) }); if (!r.ok) throw new Error("Failed"); return r.json(); },
-        onSuccess: () => toast.success("Company updated"),
+        onSuccess: async (data) => {
+            toast.success("Company updated");
+            queryClient.invalidateQueries({ queryKey: ["company-details"] });
+            // Update the session so the sidebar shows the new company name
+            await updateSession({ companyName: data.name });
+            // Force page reload to refresh session data everywhere
+            window.location.reload();
+        },
         onError: () => toast.error("Failed to update"),
     });
 
@@ -45,10 +74,10 @@ export default function SettingsPage() {
 
             {tab === "company" && (
                 <motion.div variants={fadeUp} initial="hidden" animate="show" className="bg-[var(--bg-card)] border border-slate-700/50 rounded-xl p-5 space-y-4 max-w-xl">
-                    <div><label className="text-xs text-slate-400">Company Name</label><input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" value={company.name} onChange={(e) => setCompany({ ...company, name: e.target.value })} placeholder={(session?.user as any)?.companyName || "Company"} /></div>
+                    <div><label className="text-xs text-slate-400">Company Name</label><input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" value={company.name} onChange={(e) => setCompany({ ...company, name: e.target.value })} placeholder="Enter company name" /></div>
                     <div><label className="text-xs text-slate-400">Industry</label><select className="w-full mt-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" value={company.industry} onChange={(e) => setCompany({ ...company, industry: e.target.value })}><option value="">Select...</option><option value="woodwork">Woodwork & Furniture</option><option value="textile">Textile</option><option value="metalwork">Metalwork</option><option value="food_processing">Food Processing</option><option value="other">Other</option></select></div>
                     <div><label className="text-xs text-slate-400">Address</label><textarea className="w-full mt-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" rows={3} value={company.address} onChange={(e) => setCompany({ ...company, address: e.target.value })} /></div>
-                    <button onClick={() => companyMut.mutate(company)} disabled={companyMut.isPending} className="px-4 py-2 bg-blue-500 hover:bg-blue-600 disabled:bg-slate-700 text-white text-sm font-semibold rounded-lg">Save Changes</button>
+                    <button onClick={() => companyMut.mutate(company)} disabled={companyMut.isPending || !company.name} className="px-4 py-2 bg-blue-500 hover:bg-blue-600 disabled:bg-slate-700 text-white text-sm font-semibold rounded-lg">{companyMut.isPending ? "Saving..." : "Save Changes"}</button>
                 </motion.div>
             )}
 
@@ -75,3 +104,4 @@ export default function SettingsPage() {
         </div>
     );
 }
+

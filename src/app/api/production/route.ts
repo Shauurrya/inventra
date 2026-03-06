@@ -65,7 +65,8 @@ export async function POST(req: NextRequest) {
         const userId = (session.user as any).id;
 
         const body = await req.json();
-        const { finishedProductId, quantityProduced, productionDate, notes } = body;
+        const { finishedProductId, productionDate, notes } = body;
+        const quantityProduced = Number(body.quantityProduced);
 
         if (!finishedProductId || !quantityProduced || quantityProduced <= 0) {
             return NextResponse.json(
@@ -124,7 +125,7 @@ export async function POST(req: NextRequest) {
             const entry = await tx.productionEntry.create({
                 data: {
                     finishedProductId,
-                    quantityProduced,
+                    quantityProduced: quantityProduced,
                     productionDate: productionDate ? new Date(productionDate) : new Date(),
                     notes: notes || null,
                     companyId,
@@ -138,7 +139,7 @@ export async function POST(req: NextRequest) {
                 const updatedMaterial = await tx.rawMaterial.update({
                     where: { id: bom.rawMaterialId },
                     data: {
-                        quantityInStock: { decrement: deduction },
+                        quantityInStock: { decrement: new Decimal(deduction) },
                     },
                 });
 
@@ -147,30 +148,40 @@ export async function POST(req: NextRequest) {
                         type: "PRODUCTION_OUT",
                         itemType: "RAW_MATERIAL",
                         itemId: bom.rawMaterialId,
-                        quantityChange: -deduction,
-                        balanceAfter: Number(updatedMaterial.quantityInStock),
+                        quantityChange: new Decimal(-deduction),
+                        balanceAfter: updatedMaterial.quantityInStock,
                         referenceId: entry.id,
                         notes: `Deducted for production of ${quantityProduced} units`,
                         companyId,
                     },
                 });
 
-                // Check for low stock alerts
+                // Check for low stock alerts — use findFirst + create/update instead of upsert with fabricated ID
                 if (Number(updatedMaterial.quantityInStock) < Number(updatedMaterial.minimumStockLevel)) {
-                    await tx.lowStockAlert.upsert({
+                    const existingAlert = await tx.lowStockAlert.findFirst({
                         where: {
-                            id: `alert-${bom.rawMaterialId}`,
-                        },
-                        update: {
-                            alertTriggeredAt: new Date(),
-                            isRead: false,
-                        },
-                        create: {
                             rawMaterialId: bom.rawMaterialId,
                             companyId,
-                            isRead: false,
                         },
                     });
+
+                    if (existingAlert) {
+                        await tx.lowStockAlert.update({
+                            where: { id: existingAlert.id },
+                            data: {
+                                alertTriggeredAt: new Date(),
+                                isRead: false,
+                            },
+                        });
+                    } else {
+                        await tx.lowStockAlert.create({
+                            data: {
+                                rawMaterialId: bom.rawMaterialId,
+                                companyId,
+                                isRead: false,
+                            },
+                        });
+                    }
                 }
             }
 
@@ -178,7 +189,7 @@ export async function POST(req: NextRequest) {
             const updatedProduct = await tx.finishedProduct.update({
                 where: { id: finishedProductId },
                 data: {
-                    quantityInStock: { increment: quantityProduced },
+                    quantityInStock: { increment: new Decimal(quantityProduced) },
                 },
             });
 
@@ -188,8 +199,8 @@ export async function POST(req: NextRequest) {
                     type: "PRODUCTION_IN",
                     itemType: "FINISHED_PRODUCT",
                     itemId: finishedProductId,
-                    quantityChange: quantityProduced,
-                    balanceAfter: Number(updatedProduct.quantityInStock),
+                    quantityChange: new Decimal(quantityProduced),
+                    balanceAfter: updatedProduct.quantityInStock,
                     referenceId: entry.id,
                     notes: `Produced ${quantityProduced} units`,
                     companyId,
@@ -200,10 +211,11 @@ export async function POST(req: NextRequest) {
         });
 
         return NextResponse.json(result, { status: 201 });
-    } catch (error) {
+    } catch (error: any) {
         console.error("Production error:", error);
+        const message = error?.message || "Failed to record production. Transaction rolled back.";
         return NextResponse.json(
-            { error: "Failed to record production. Transaction rolled back." },
+            { error: message },
             { status: 500 }
         );
     }

@@ -56,11 +56,15 @@ export const authOptions: NextAuthOptions = {
         maxAge: 30 * 24 * 60 * 60, // 30 days
     },
     callbacks: {
-        async jwt({ token, user }) {
+        async jwt({ token, user, trigger, session: updateData }) {
             if (user) {
                 token.role = (user as any).role;
                 token.companyId = (user as any).companyId;
                 token.companyName = (user as any).companyName;
+            }
+            // When session is updated from the client (e.g. after company name change)
+            if (trigger === "update" && updateData?.companyName) {
+                token.companyName = updateData.companyName;
             }
             return token;
         },
@@ -79,3 +83,4 @@ export const authOptions: NextAuthOptions = {
     },
     secret: process.env.NEXTAUTH_SECRET,
 };
+

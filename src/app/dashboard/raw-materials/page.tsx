@@ -1,9 +1,10 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { useState } from "react";
-import { Boxes, Grid, List, Download, Search } from "lucide-react";
+import { Boxes, Grid, List, Download, Search, Plus } from "lucide-react";
+import { toast } from "sonner";
 import { StockHealthBar } from "@/components/charts/StockHealthBar";
 import { SparkLine } from "@/components/charts/SparkLine";
 import { AnimatedNumber } from "@/components/charts/AnimatedNumber";
@@ -13,12 +14,41 @@ const fadeUp = { hidden: { opacity: 0, y: 20 }, show: { opacity: 1, y: 0, transi
 const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.06 } } };
 
 export default function RawMaterialsPage() {
+    const queryClient = useQueryClient();
     const [view, setView] = useState<"grid" | "table">("grid");
     const [search, setSearch] = useState("");
+    const [panelOpen, setPanelOpen] = useState(false);
+    const [formData, setFormData] = useState({
+        name: "",
+        unit: "piece",
+        openingStock: 0,
+        minimumStockLevel: 0,
+        costPerUnit: 0,
+    });
 
     const { data: materials = [], isLoading } = useQuery({
         queryKey: ["raw-materials"],
         queryFn: async () => { const r = await fetch("/api/raw-materials"); return r.json(); },
+    });
+
+    const addMutation = useMutation({
+        mutationFn: async (data: any) => {
+            const r = await fetch("/api/raw-materials", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(data),
+            });
+            if (!r.ok) throw new Error((await r.json()).error);
+            return r.json();
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["raw-materials"] });
+            queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+            toast.success("Raw material added successfully!");
+            setFormData({ name: "", unit: "piece", openingStock: 0, minimumStockLevel: 0, costPerUnit: 0 });
+            setPanelOpen(false);
+        },
+        onError: (e: any) => toast.error(e.message),
     });
 
     const filtered = materials.filter((m: any) => m.name.toLowerCase().includes(search.toLowerCase()));
@@ -40,6 +70,7 @@ export default function RawMaterialsPage() {
                         <button onClick={() => setView("grid")} className={`p-1.5 rounded ${view === "grid" ? "bg-blue-500/20 text-blue-400" : "text-slate-500"}`}><Grid className="w-4 h-4" /></button>
                         <button onClick={() => setView("table")} className={`p-1.5 rounded ${view === "table" ? "bg-blue-500/20 text-blue-400" : "text-slate-500"}`}><List className="w-4 h-4" /></button>
                     </div>
+                    <button onClick={() => setPanelOpen(true)} className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white text-sm font-semibold rounded-lg transition-colors flex items-center gap-1.5"><Plus className="w-4 h-4" /> Add Material</button>
                 </div>
             </div>
 
@@ -106,6 +137,53 @@ export default function RawMaterialsPage() {
                         </tbody>
                     </table>
                 </div>
+            )}
+
+            {/* Add Material Panel */}
+            {panelOpen && (
+                <>
+                    <div className="fixed inset-0 bg-black/50 z-40" onClick={() => setPanelOpen(false)} />
+                    <motion.div initial={{ x: 500 }} animate={{ x: 0 }} exit={{ x: 500 }} className="fixed right-0 top-0 h-full w-full max-w-md bg-[#0d1117] border-l border-slate-700/50 z-50 overflow-y-auto p-6 space-y-4">
+                        <div className="flex items-center justify-between"><h3 className="text-lg font-bold text-white">Add Raw Material</h3><button onClick={() => setPanelOpen(false)} className="text-slate-500 hover:text-white">✕</button></div>
+
+                        <div><label className="text-xs text-slate-400">Material Name *</label><input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" placeholder="e.g. Teak Wood, Steel Rod..." value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} /></div>
+
+                        <div><label className="text-xs text-slate-400">Unit</label>
+                            <select className="w-full mt-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" value={formData.unit} onChange={(e) => setFormData({ ...formData, unit: e.target.value })}>
+                                <option value="piece">Piece</option>
+                                <option value="kg">Kilogram (kg)</option>
+                                <option value="litre">Litre</option>
+                                <option value="metre">Metre</option>
+                                <option value="sqft">Square Feet (sqft)</option>
+                                <option value="box">Box</option>
+                                <option value="bundle">Bundle</option>
+                                <option value="roll">Roll</option>
+                            </select>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                            <div><label className="text-xs text-slate-400">Opening Stock</label><input type="number" min="0" step="0.01" className="w-full mt-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" value={formData.openingStock || ""} onChange={(e) => setFormData({ ...formData, openingStock: Number(e.target.value) })} /></div>
+                            <div><label className="text-xs text-slate-400">Minimum Stock Level *</label><input type="number" min="0" step="0.01" className="w-full mt-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" value={formData.minimumStockLevel || ""} onChange={(e) => setFormData({ ...formData, minimumStockLevel: Number(e.target.value) })} /></div>
+                        </div>
+
+                        <div><label className="text-xs text-slate-400">Cost Per Unit (₹)</label><input type="number" min="0" step="0.01" className="w-full mt-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" value={formData.costPerUnit || ""} onChange={(e) => setFormData({ ...formData, costPerUnit: Number(e.target.value) })} /></div>
+
+                        {formData.openingStock > 0 && formData.costPerUnit > 0 && (
+                            <div className="bg-slate-800/50 rounded-lg p-3">
+                                <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">Opening Value</p>
+                                <p className="text-lg font-bold text-blue-400">{formatINR(formData.openingStock * formData.costPerUnit)}</p>
+                            </div>
+                        )}
+
+                        <button
+                            onClick={() => addMutation.mutate(formData)}
+                            disabled={addMutation.isPending || !formData.name || formData.name.length < 2}
+                            className="w-full py-3 bg-blue-500 hover:bg-blue-600 disabled:bg-slate-700 disabled:text-slate-500 text-white font-semibold rounded-lg transition-colors mt-4"
+                        >
+                            {addMutation.isPending ? "Adding..." : "Add Raw Material"}
+                        </button>
+                    </motion.div>
+                </>
             )}
         </div>
     );
